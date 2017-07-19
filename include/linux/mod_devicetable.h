@@ -442,6 +442,23 @@ struct pci_epf_device_id {
 	kernel_ulong_t driver_data;
 };
 
+/* i3c */
+
+#define I3C_MATCH_DCR			BIT(0)
+#define I3C_MATCH_MANUF			BIT(1)
+#define I3C_MATCH_PART			BIT(2)
+#define I3C_MATCH_EXTRA_INFO		BIT(3)
+
+struct i3c_device_id {
+	__u8 match_flags;
+	__u8 dcr;
+	__u16 manuf_id;
+	__u16 part_id;
+	__u16 extra_info;
+
+	const void *data;
+};
+
 /* spi */
 
 #define SPI_NAME_SIZE	32
