@@ -193,6 +193,8 @@ struct spinand_manufacturer {
 	const struct spinand_manufacturer_ops *ops;
 };
 
+extern const struct spinand_manufacturer micron_spinand_manufacturer;
+
 #define SPINAND_CAP_RD_X1	BIT(0)
 #define SPINAND_CAP_RD_X2	BIT(1)
 #define SPINAND_CAP_RD_X4	BIT(2)
