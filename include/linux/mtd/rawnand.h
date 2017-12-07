@@ -803,7 +803,7 @@ enum nand_op_instr_type {
  *                            You'll have to use the appropriate element
  *                            depending on @type
  * @delay_ns: delay to apply by the controller after the instruction has been
- *	      actually executed (most of them are directly handled by the
+ *	      actually sent on the bus (most of them are directly handled by the
  *	      controllers once the timings negociation has been done)
  */
 struct nand_op_instr {
@@ -910,12 +910,12 @@ struct nand_op_instr {
  *			of the sub-operation
  *
  * Both parameters @first_instr_start_off and @last_instr_end_off apply for the
- * address cycles in the case of address, or for data offset in the case of data
- * transfers. Otherwise, it is irrelevant.
+ * address cycles in the case of address instructions, or for data offset in the
+ * case of data instructions. Otherwise, it is irrelevant.
  *
  * When an operation cannot be handled as is by the NAND controller, it will
- * be split by the parser and the remaining pieces will be handled as
- * sub-operations.
+ * be split by the parser into sub-operations which will be passed to the
+ * controller driver.
  */
 struct nand_subop {
 	const struct nand_op_instr *instrs;
@@ -954,7 +954,7 @@ struct nand_op_parser_data_constraints {
 /**
  * struct nand_op_parser_pattern_elem - One element of a pattern
  * @type: the instructuction type
- * @optional: if this element of the pattern is optional or mandatory
+ * @optional: whether if this element of the pattern is optional or mandatory
  * @addr/@data: address or data constraint (number of cycles or data length)
  */
 struct nand_op_parser_pattern_elem {
@@ -1000,21 +1000,22 @@ struct nand_op_parser_pattern_elem {
 	}
 
 /**
- * struct nand_op_parser_pattern - A complete pattern
+ * struct nand_op_parser_pattern - A full pattern
  * @elems: array of pattern elements
  * @nelems: number of pattern elements in @elems array
  * @exec: the function that will actually execute this pattern, written in the
  *	  controller driver
  *
- * This is a complete pattern that is a list of elements, each one reprensenting
+ * This is an entire pattern that is a list of elements, each one reprensenting
  * one instruction with its constraints. Controller drivers must declare as much
  * patterns as they support and give the list of the supported patterns (created
  * with the help of the following macro) when calling nand_op_parser_exec_op()
  * which is the preferred approach for advanced controllers as the main thing to
  * do in the driver implementation of ->exec_op(). Once there is a match between
- * the pattern and an operation, the either the core just wanted to know if the
- * operation was supporter (through the use of the check_only boolean) or it
- * calls the @exec function to actually do the operation.
+ * the pattern and an operation (or a subset of this operation), either the core
+ * just wanted to know if the operation was supported (through the use of the
+ * check_only boolean) or it calls the @exec function to actually do the
+ * operation.
  */
 struct nand_op_parser_pattern {
 	const struct nand_op_parser_pattern_elem *elems;

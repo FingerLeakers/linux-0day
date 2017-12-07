@@ -703,8 +703,8 @@ static void nand_wait_status_ready(struct mtd_info *mtd, unsigned long timeo)
  * cycles are done, the function will send a READ0 command to cancel the
  * "READ_STATUS state" and let the normal flow of operation to continue.
  *
- * This helper *cannot* send a WAITRDY command or ->exec_op() implementations
- * using it will enter an infinite loop.
+ * Be aware that calling this helper from an ->exec_op() implementation means
+ * this implementation must be re-entrant.
  *
  * Return 0 if the NAND chip is ready, a negative error otherwise.
  */
@@ -715,6 +715,14 @@ int nand_soft_waitrdy(struct nand_chip *chip, unsigned long timeout_ms)
 
 	if (!chip->exec_op)
 		return -ENOTSUPP;
+
+	/*
+	 * A use case of this helper is to be used as implementation of the
+	 * WAITRDY instruction in ->exec_op() when the controller does not
+	 * provide any pin to provide the ready status. Hence, it *should not*
+	 * send a WAITRDY instruction or ->exec_op() implementations using it
+	 * are very likely to enter an infinite loop.
+	 */
 
 	ret = nand_status_op(chip, NULL);
 	if (ret)
@@ -729,7 +737,12 @@ int nand_soft_waitrdy(struct nand_chip *chip, unsigned long timeout_ms)
 		if (status & NAND_STATUS_READY)
 			break;
 
-		udelay(100);
+		/*
+		 * Typical lowest execution time for a tR on most NANDs is 10us,
+		 * use this as polling delay before doing something smarter (ie.
+		 * deriving a delay from the timeout value, timeout_ms/ratio).
+		 */
+		udelay(10);
 	} while	(time_before(jiffies, timeout_ms));
 
 	nand_exit_status_op(chip);
@@ -1329,7 +1342,7 @@ static int nand_fill_column_cycles(struct nand_chip *chip, u8 *addrs,
 
 	addrs[0] = offset_in_page;
 
-	/* Small pages use 1 cycle for the columns, while large page need 2 */
+	/* Small pages use 1 cycle for the columns, while large pages need 2 */
 	if (mtd->writesize <= 512)
 		return 1;
 
@@ -1356,7 +1369,7 @@ static int nand_sp_exec_read_page_op(struct nand_chip *chip, unsigned int page,
 	struct nand_operation op = NAND_OPERATION(instrs);
 	int ret;
 
-	/* Drop the DATA_OUT instruction if len is set to 0. */
+	/* Drop the DATA_IN instruction if len is set to 0. */
 	if (!len)
 		op.ninstrs--;
 
@@ -1645,7 +1658,7 @@ static int nand_exec_prog_page_op(struct nand_chip *chip, unsigned int page,
 
 	instrs[2].ctx.addr.naddrs = naddrs;
 
-	/* Drop the lasts instructions if we're not programming the page. */
+	/* Drop the last two instructions if we're not programming the page. */
 	if (!prog) {
 		op.ninstrs -= 2;
 		/* Also drop the DATA_OUT instruction if empty. */
@@ -2284,11 +2297,12 @@ EXPORT_SYMBOL_GPL(nand_write_data_op);
  * @instr_idx: index of the instruction in the @instrs array that matches the
  *	       first instruction of the subop structure
  * @instr_start_off: offset at which the first instruction of the subop
- *		     structure must start if it is and address or a data
+ *		     structure must start if it is an address or a data
  *		     instruction
+ * @subop: TODO
  *
- * This structure is used by the core to handle splitting lengthy instructions
- * into sub-operations.
+ * This structure is used by the core to split NAND operations into
+ * sub-operations that can be handled by the NAND controller.
  */
 struct nand_op_parser_ctx {
 	const struct nand_op_instr *instrs;
@@ -2300,10 +2314,14 @@ struct nand_op_parser_ctx {
 
 /**
  * nand_op_parser_must_split_instr - Checks if an instruction must be split
- * @pat: the parser pattern that match
- * @instr: the instruction array to check
- * @start_offset: the offset from which to start in the first instruction of the
- *		  @instr array
+ * @pat: the parser pattern element that matches (not the whole pattern)
+ * @instr: pointer to the instruction to check (one at a time)
+ * @start_offset: this is an in/out parameter. If @instr may be split,
+ *		  then @start_offset is the offset from which to start
+ *		  (either an address cycle or an offset in the data buffer).
+ *		  Conversely, if the function returns true (instr must be
+ *		  split), this parameter is updated to point to the starting
+ *		  offset of the next instruction.
  *
  * Some NAND controllers are limited and cannot send X address cycles with a
  * unique operation, or cannot read/write more than Y bytes at the same time.
@@ -2350,11 +2368,15 @@ nand_op_parser_must_split_instr(const struct nand_op_parser_pattern_elem *pat,
 }
 
 /**
- * nand_op_parser_match_pat - Checks a pattern
- * @pat: the parser pattern to check if it matches
- * @ctx: the context structure to match with the pattern @pat
+ * nand_op_parser_match_pat - Checks if a pattern matches the instructions
+ *			      remaining in the parser context
+ * @pat: the pattern to test
+ * @ctx: the parser context structure to match with the pattern @pat
  *
- * Check if *one* given pattern matches the given sequence of instructions
+ * Check if @pat matches the set or a sub-set of instructions remaining in @ctx.
+ * Returns true if this is the case, false ortherwise. When true is returned,
+ * @ctx->subop is updated with the set of instructions to be passed to the
+ * controller driver.
  */
 static bool
 nand_op_parser_match_pat(const struct nand_op_parser_pattern *pat,
@@ -2525,17 +2547,20 @@ static void nand_op_parser_trace(const struct nand_op_parser_ctx *ctx)
 /**
  * nand_op_parser_exec_op - exec_op parser
  * @chip: the NAND chip
- * @parser: the parser to use given by the controller driver
+ * @parser: patterns description provided by the controller driver
  * @op: the NAND operation to address
- * @check_only: flag asking if the entire operation could be handled
+ * @check_only: flag asking if the entire operation could be handled. When true,
+ *		the function only checks if @op can be handled but does not
+ *		execute the opration.
  *
- * Function that must be called by each driver that implement the "exec_op API"
- * in their own ->exec_op() implementation.
+ * Helper function designed to ease integration of NAND controller drivers that
+ * only support a limited set of instruction sequences. The supported sequences
+ * are described in @parser, and the framework takes care of splitting @op into
+ * multi sub-operations (if required) and pass them back to @pattern->exec() if
+ * @check_only is set to false.
  *
- * The function iterates on all the instructions asked and make use of internal
- * parsers to find matches between the instruction list and the handled patterns
- * filled by the controller drivers inside the @parser structure. If needed, the
- * instructions could be split into sub-operations and be executed sequentially.
+ * NAND controller drivers should call this function from their own ->exec_op()
+ * implementation.
  */
 int nand_op_parser_exec_op(struct nand_chip *chip,
 			   const struct nand_op_parser *parser,
@@ -2605,18 +2630,11 @@ static int nand_subop_get_start_off(const struct nand_subop *subop,
  * @subop: The entire sub-operation
  * @instr_idx: Index of the instruction inside the sub-operation
  *
- * Instructions arrays may be split by the parser between instructions,
- * and also in the middle of an address instruction if the number of cycles
- * to assert in one operation is not supported by the controller.
+ * During driver development, one could be tempted to directly use the
+ * ->addr.addrs field of address instructions. This is wrong as address
+ * instructions might be split.
  *
- * For this, instead of using the first index of the ->addr.addrs field from the
- * address instruction, the NAND controller driver must use this helper that
- * will either return 0 if the index does not point to the first instruction of
- * the sub-operation, or the offset of the next starting offset inside the
- * address cycles.
- *
- * Returns the offset of the first address cycle to assert from the pointed
- * address instruction.
+ * Given an address instruction, returns the offset of the first cycle to issue.
  */
 int nand_subop_get_addr_start_off(const struct nand_subop *subop,
 				  unsigned int instr_idx)
@@ -2634,12 +2652,11 @@ EXPORT_SYMBOL_GPL(nand_subop_get_addr_start_off);
  * @subop: The entire sub-operation
  * @instr_idx: Index of the instruction inside the sub-operation
  *
- * Instructions arrays may be split by the parser between instructions,
- * and also in the middle of an address instruction if the number of cycles
- * to assert in one operation is not supported by the controller.
+ * During driver development, one could be tempted to directly use the
+ * ->addr->naddrs field of a data instruction. This is wrong as instructions
+ * might be split.
  *
- * Returns the number of address cycles to assert from the pointed address
- * instruction.
+ * Given an address instruction, returns the number of address cycle to issue.
  */
 int nand_subop_get_num_addr_cyc(const struct nand_subop *subop,
 				unsigned int instr_idx)
@@ -2667,12 +2684,11 @@ EXPORT_SYMBOL_GPL(nand_subop_get_num_addr_cyc);
  * @subop: The entire sub-operation
  * @instr_idx: Index of the instruction inside the sub-operation
  *
- * Instructions arrays may be split by the parser between instructions,
- * and also in the middle of a data instruction if the number of bytes to access
- * in one operation is greater that the controller limit.
+ * During driver development, one could be tempted to directly use the
+ * ->data->buf.{in,out} field of data instructions. This is wrong as data
+ * instructions might be split.
  *
- * Returns the data offset inside the pointed data instruction buffer from which
- * to start.
+ * Given a data instruction, returns the offset to start from.
  */
 int nand_subop_get_data_start_off(const struct nand_subop *subop,
 				  unsigned int instr_idx)
@@ -2690,16 +2706,11 @@ EXPORT_SYMBOL_GPL(nand_subop_get_data_start_off);
  * @subop: The entire sub-operation
  * @instr_idx: Index of the instruction inside the sub-operation
  *
- * Instructions arrays may be split by the parser between instructions,
- * and also in the middle of a data instruction if the number of bytes to access
- * in one operation is greater that the controller limit.
+ * During driver development, one could be tempted to directly use the
+ * ->data->len field of a data instruction. This is wrong as data instructions
+ * might be split.
  *
- * For this, instead of using the ->data.len field from the data instruction,
- * the NAND controller driver must use this helper that will return the actual
- * length of data to move between the first and last offset asked for this
- * particular instruction.
- *
- * Returns the length of the data to move from the pointed data instruction.
+ * Returns the length of the chunk of data to process.
  */
 int nand_subop_get_data_len(const struct nand_subop *subop,
 			    unsigned int instr_idx)
