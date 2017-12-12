@@ -499,14 +499,18 @@ static void cdns_i3c_master_start_xfer_locked(struct cdns_i3c_master *master)
 	struct cdns_i3c_xfer *xfer = master->xferqueue.cur;
 	unsigned int i;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	if (!xfer)
 		return;
 
 	writel(MST_INT_XFER_STATUS | MST_INT_CMD_EMPTY,
 	       master->regs + MST_ICR);
+	pr_info("%s:%i\n", __func__, __LINE__);
 	for (i = 0; i < xfer->ncmds; i++) {
 		struct cdns_i3c_cmd *cmd = &xfer->cmds[i];
 
+	pr_info("%s:%i isr = %08x, status = %08x\n", __func__, __LINE__, readl(master->regs + MST_ISR), readl(master->regs + MST_STATUS0));
+	pr_info("%s:%i\n", __func__, __LINE__);
 		cdns_i3c_master_wr_to_tx_fifo(master, cmd->tx_buf,
 					      cmd->tx_len);
 	}
@@ -514,10 +518,12 @@ static void cdns_i3c_master_start_xfer_locked(struct cdns_i3c_master *master)
 	for (i = 0; i < xfer->ncmds; i++) {
 		struct cdns_i3c_cmd *cmd = &xfer->cmds[i];
 
+//		pr_info("%s:%i cmd = %08x %08x\n", __func__, __LINE__, cmd->cmd1, cmd->cmd0);
 		writel(cmd->cmd1, master->regs + CMD1_FIFO);
 		writel(cmd->cmd0, master->regs + CMD0_FIFO);
 	}
 
+	pr_info("%s:%i isr = %08x, status = %08x\n", __func__, __LINE__, readl(master->regs + MST_ISR), readl(master->regs + MST_STATUS0));
 	writel(MST_INT_CMD_EMPTY | MST_INT_RD_ABORT, master->regs + MST_IER);
 }
 
@@ -526,6 +532,7 @@ static void cdns_i3c_master_end_xfer_locked(struct cdns_i3c_master *master,
 {
 	struct cdns_i3c_xfer *xfer = master->xferqueue.cur;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	if (!xfer)
 		return;
 
@@ -533,6 +540,7 @@ static void cdns_i3c_master_end_xfer_locked(struct cdns_i3c_master *master,
 	if (!isr)
 		return;
 
+	pr_info("%s:%i isr = %08x status = %08x\n", __func__, __LINE__, isr, readl(master->regs + MST_STATUS0));
 
 	writel(MST_INT_CMD_EMPTY | MST_INT_RD_ABORT, master->regs + MST_IDR);
 	xfer->isr = isr & ~MST_INT_CMD_EMPTY;
@@ -540,9 +548,14 @@ static void cdns_i3c_master_end_xfer_locked(struct cdns_i3c_master *master,
 	if (xfer->isr & MST_INT_RD_ABORT) {
 		writel(FLUSH_RX_FIFO | FLUSH_TX_FIFO | FLUSH_CMD_FIFO,
 		       master->regs + FLUSH_CTRL);
+//		xfer->isr = readl(master->regs + MST_ISR) &
+//			    (MST_XFER_INTS | MST_INT_COMP);
+		pr_info("%s:%i isr = %08x\n", __func__, __LINE__, readl(master->regs + MST_ISR));
 		writel(readl(master->regs + CTRL) | CTRL_DEV_EN,
 		       master->regs + CTRL);
+		pr_info("%s:%i\n", __func__, __LINE__);
 	} else if (xfer->isr != MST_INT_COMP) {
+		pr_info("%s:%i\n", __func__, __LINE__);
 		cdns_i3c_master_drain_rx_fifo(master);
 	} else {
 		unsigned int i;
@@ -550,20 +563,28 @@ static void cdns_i3c_master_end_xfer_locked(struct cdns_i3c_master *master,
 		for (i = 0; i < xfer->ncmds; i++) {
 			struct cdns_i3c_cmd *cmd = &xfer->cmds[i];
 
+			pr_info("%s:%i\n", __func__, __LINE__);
 			cdns_i3c_master_rd_from_rx_fifo(master, cmd->rx_buf,
 							cmd->rx_len);
+			pr_info("%s:%i\n", __func__, __LINE__);
 		}
 	}
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	complete(&xfer->comp);
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	xfer = list_first_entry_or_null(&master->xferqueue.list,
 					struct cdns_i3c_xfer, node);
+	pr_info("%s:%i\n", __func__, __LINE__);
 	if (xfer)
 		list_del_init(&xfer->node);
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	master->xferqueue.cur = xfer;
+	pr_info("%s:%i\n", __func__, __LINE__);
 	cdns_i3c_master_start_xfer_locked(master);
+	pr_info("%s:%i\n", __func__, __LINE__);
 }
 
 static void cdns_i3c_master_queue_xfer(struct cdns_i3c_master *master,
@@ -571,15 +592,21 @@ static void cdns_i3c_master_queue_xfer(struct cdns_i3c_master *master,
 {
 	unsigned long flags;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	init_completion(&xfer->comp);
+	pr_info("%s:%i\n", __func__, __LINE__);
 	spin_lock_irqsave(&master->xferqueue.lock, flags);
+	pr_info("%s:%i\n", __func__, __LINE__);
 	if (master->xferqueue.cur) {
 		list_add_tail(&xfer->node, &master->xferqueue.list);
+	pr_info("%s:%i\n", __func__, __LINE__);
 	} else {
 		master->xferqueue.cur = xfer;
 		cdns_i3c_master_start_xfer_locked(master);
+	pr_info("%s:%i\n", __func__, __LINE__);
 	}
 	spin_unlock_irqrestore(&master->xferqueue.lock, flags);
+	pr_info("%s:%i\n", __func__, __LINE__);
 }
 
 static void cdns_i3c_master_unqueue_xfer(struct cdns_i3c_master *master,
@@ -587,10 +614,12 @@ static void cdns_i3c_master_unqueue_xfer(struct cdns_i3c_master *master,
 {
 	unsigned long flags;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	spin_lock_irqsave(&master->xferqueue.lock, flags);
 	if (master->xferqueue.cur == xfer) {
 		u32 status;
 
+		pr_info("%s:%i\n", __func__, __LINE__);
 		writel(readl(master->regs + CTRL) & ~CTRL_DEV_EN,
 		       master->regs + CTRL);
 		readl_poll_timeout_atomic(master->regs + MST_STATUS0, status,
@@ -601,9 +630,14 @@ static void cdns_i3c_master_unqueue_xfer(struct cdns_i3c_master *master,
 		       master->regs + FLUSH_CTRL);
 		writel(MST_INT_CMD_EMPTY | MST_INT_RD_ABORT,
 		       master->regs + MST_IDR);
+//		xfer->isr = readl(master->regs + MST_ISR) &
+//			    (MST_XFER_INTS | MST_INT_COMP);
+		pr_info("%s:%i isr = %08x\n", __func__, __LINE__, readl(master->regs + MST_ISR));
 		writel(readl(master->regs + CTRL) | CTRL_DEV_EN,
 		       master->regs + CTRL);
+		pr_info("%s:%i\n", __func__, __LINE__);
 	} else {
+		pr_info("%s:%i\n", __func__, __LINE__);
 		list_del_init(&xfer->node);
 	}
 	spin_unlock_irqrestore(&master->xferqueue.lock, flags);
@@ -617,10 +651,12 @@ static int cdns_i3c_master_send_ccc_cmd(struct i3c_master_controller *m,
 	struct cdns_i3c_cmd *ccmd;
 	int ret;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	xfer = cdns_i3c_master_alloc_xfer(master, 1);
 	if (!xfer)
 		return -ENOMEM;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	ccmd = xfer->cmds;
 	ccmd->cmd1 = CMD1_FIFO_CCC(cmd->id);
 	ccmd->cmd0 = CMD0_FIFO_IS_CCC |
@@ -653,7 +689,9 @@ static int cdns_i3c_master_send_ccc_cmd(struct i3c_master_controller *m,
 	else
 		ret = -ETIMEDOUT;
 
+	pr_info("%s:%i isr = %08x, status = %08x\n", __func__, __LINE__, xfer->isr, readl(master->regs + MST_STATUS0));
 	cdns_i3c_master_free_xfer(xfer);
+	pr_info("%s:%i ret = %d\n", __func__, __LINE__, ret);
 
 	return ret;
 }
@@ -844,39 +882,48 @@ static int cdns_i3c_master_send_hdr_cmd(struct i3c_master_controller *m,
 	u32 *buf = NULL;
 	u8 crc5;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	if (ncmds < 1)
 		return 0;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	if (ncmds > 1 || cmds[0].ndatawords > CMD0_FIFO_PL_LEN_MAX)
 		return -ENOTSUPP;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	if (cmds[0].mode != I3C_HDR_DDR)
 		return -ENOTSUPP;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	cmdword = ((u16)cmds[0].code << 8) | (cmds[0].addr << 1);
 	if (cmdword & I3C_DDR_READ_CMD)
 		nrxwords += cmds[0].ndatawords + 1;
 	else
 		ntxwords += cmds[0].ndatawords + 1;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	if (ntxwords > master->caps.txfifodepth ||
 	    nrxwords > master->caps.rxfifodepth)
 		return -ENOTSUPP;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	buf = kzalloc((nrxwords + ntxwords) * sizeof(*buf), GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	xfer = cdns_i3c_master_alloc_xfer(master, 2);
 	if (!xfer) {
 		ret = -ENOMEM;
 		goto out_free_buf;
 	}
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	ccmd = &xfer->cmds[0];
 	ccmd->cmd1 = CMD1_FIFO_CCC(I3C_CCC_ENTHDR(0));
 	ccmd->cmd0 = CMD0_FIFO_IS_CCC;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	ccmd = &xfer->cmds[1];
 
 	if (cmdword & I3C_DDR_READ_CMD) {
@@ -904,14 +951,20 @@ static int cdns_i3c_master_send_hdr_cmd(struct i3c_master_controller *m,
 
 	ccmd->cmd0 = CMD0_FIFO_IS_DDR | CMD0_FIFO_PL_LEN(ntxwords);
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	cdns_i3c_master_queue_xfer(master, xfer);
 	if (!wait_for_completion_timeout(&xfer->comp, msecs_to_jiffies(1000)))
 		cdns_i3c_master_unqueue_xfer(master, xfer);
 
+	pr_info("%s:%i nrxwords = %d ccmd->rx_len = %d\n", __func__, __LINE__, nrxwords, ccmd->rx_len);
 	if (xfer->isr == MST_INT_COMP) {
+		pr_info("%s:%i\n", __func__, __LINE__);
 		ret = 0;
+		for (i = 0; i < nrxwords; i++)
+			pr_info("%s:%i word[%d] %08x\n", __func__, __LINE__, i, ((u32 *)ccmd->rx_buf)[i]);
 		for (i = 0; i < nrxwords; i++) {
 			word = ((u32 *)ccmd->rx_buf)[i];
+			pr_info("%s:%i word[%d] %08x\n", __func__, __LINE__, i, word);
 			datain = (word >> 2) & GENMASK(15, 0);
 			if (i < nrxwords - 1) {
 				checkword = prepare_ddr_data_word(datain, !i);
@@ -922,6 +975,7 @@ static int cdns_i3c_master_send_hdr_cmd(struct i3c_master_controller *m,
 			}
 
 			if (checkword != word) {
+				pr_info("%s:%i word[%d] %08x %08x\n", __func__, __LINE__, i, word, checkword);
 				ret = -EIO;
 				break;
 			}
@@ -932,11 +986,14 @@ static int cdns_i3c_master_send_hdr_cmd(struct i3c_master_controller *m,
 			}
 		}
 	} else if (!xfer->isr) {
+		pr_info("%s:%i\n", __func__, __LINE__);
 		ret = -ETIMEDOUT;
 	} else {
+		pr_info("%s:%i\n", __func__, __LINE__);
 		ret = -EIO;
 	}
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	cdns_i3c_master_free_xfer(xfer);
 
 out_free_buf:
@@ -1169,6 +1226,7 @@ static int cdns_i3c_master_do_daa_locked(struct cdns_i3c_master *master)
 	u32 prescl1, ctrl, devs;
 	int ret, slot, ncycles;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	ret = i3c_master_entdaa_locked(&master->base);
 	if (ret)
 		return ret;
@@ -1195,10 +1253,13 @@ static int cdns_i3c_master_do_daa_locked(struct cdns_i3c_master *master)
 		data->id = slot;
 		rr = readl(master->regs + DEV_ID_RR0(slot));
 		addr = DEV_ID_RR0_GET_DEV_ADDR(rr);
+
+		pr_info("%s:%i addr = %02x\n", __func__, __LINE__, addr);
 		i3cdev = i3c_master_add_i3c_dev_locked(&master->base, addr);
 		if (IS_ERR(i3cdev))
 			return PTR_ERR(i3cdev);
 
+		pr_info("%s:%i\n", __func__, __LINE__);
 		i3c_device_get_info(i3cdev, &devinfo);
 		clear_bit(data->id, &master->free_dev_slots);
 		i3c_device_set_master_data(i3cdev, data);
@@ -1288,6 +1349,7 @@ static int cdns_i3c_master_bus_init(struct i3c_master_controller *m)
 		return -EINVAL;
 	}
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	sysclk_rate = clk_get_rate(master->sysclk);
 	if (!sysclk_rate)
 		return -EINVAL;
@@ -1396,6 +1458,7 @@ static int cdns_i3c_master_bus_init(struct i3c_master_controller *m)
 	if (ret)
 		goto err_disable_master;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	ret = cdns_i3c_master_do_daa_locked(master);
 	if (ret < 0)
 		goto err_disable_master;
@@ -1498,6 +1561,8 @@ static irqreturn_t cdns_i3c_master_interrupt(int irq, void *data)
 
 	if (status & MST_INT_IBI_REQ)
 		cnds_i3c_master_demux_ibis(master);
+	pr_info("%s:%i imr = %08x\n", __func__, __LINE__,
+		readl(master->regs + MST_IMR));
 
 	return IRQ_HANDLED;
 }
@@ -1750,6 +1815,7 @@ static int cdns_i3c_master_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_disable_sysclk;
 
+	pr_info("%s:%i\n", __func__, __LINE__);
 	return 0;
 
 err_disable_sysclk:
