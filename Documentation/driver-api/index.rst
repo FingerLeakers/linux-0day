@@ -30,6 +30,7 @@ available subsections can be seen below.
    pci
    spi
    i2c
+   i3c/index
    hsi
    edac
    scsi
