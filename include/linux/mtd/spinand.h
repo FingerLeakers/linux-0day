@@ -194,6 +194,7 @@ struct spinand_manufacturer {
 };
 
 extern const struct spinand_manufacturer micron_spinand_manufacturer;
+extern const struct spinand_manufacturer winbond_spinand_manufacturer;
 
 #define SPINAND_CAP_RD_X1	BIT(0)
 #define SPINAND_CAP_RD_X2	BIT(1)
