@@ -123,6 +123,39 @@ static ssize_t ddr_msg_store(struct device *dev, struct device_attribute *attr,
 }
 static const DEVICE_ATTR_RW(ddr_msg);
 
+static ssize_t perf_show(struct device *dev, struct device_attribute *attr,
+			 char *buf)
+{
+	struct i3c_device *i3cdev = container_of(dev, struct i3c_device, dev);
+	unsigned long nmsgs = 0, timeout;
+	u8 reg = 5, gpo = 0;
+	struct i3c_priv_xfer xfers[] = {
+		{
+			.flags = 0,
+			.len = 1,
+			.data.out = &reg,
+		},
+		{
+			.flags = I3C_PRIV_XFER_STOP,
+			.len = 1,
+			.data.out = &gpo,
+		}
+	};
+	int ret;
+
+	timeout = jiffies + 10*HZ;
+	while (time_before(jiffies, timeout)) {
+		ret = i3c_device_do_priv_xfers(i3cdev, xfers, ARRAY_SIZE(xfers));
+		if (ret)
+			return ret;
+
+		nmsgs++;
+	}
+
+	return sprintf(buf, "num messages in 10s = %ld\n", nmsgs);
+}
+static const DEVICE_ATTR_RO(perf);
+
 static void ibi_handler(struct i3c_device *dev,
 			const struct i3c_ibi_payload *payload)
 {
@@ -143,6 +176,7 @@ static int dummy_i3c_probe(struct i3c_device *dev)
 		if (devinfo.bcr & I3C_BCR_HDR_CAP)
 			device_create_file(&dev->dev, &dev_attr_ddr_msg);
 
+		device_create_file(&dev->dev, &dev_attr_perf);
 		pr_info("%s:%i\n", __func__, __LINE__);
 		return device_create_file(&dev->dev, &dev_attr_gpo);
 	}
