@@ -51,8 +51,8 @@ i3c_master_alloc_i2c_dev(struct i3c_master_controller *master,
 static int i3c_master_send_ccc_cmd_locked(struct i3c_master_controller *master,
 					  struct i3c_ccc_cmd *cmd)
 {
-	if (WARN_ON(!rwsem_is_locked(&master->bus->lock)))
-		return -EINVAL;
+//	if (WARN_ON(!rwsem_is_locked(&master->bus->lock)))
+//		return -EINVAL;
 
 	if (!cmd || !master)
 		return -EINVAL;

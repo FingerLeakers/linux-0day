@@ -33,7 +33,8 @@ static DEFINE_MUTEX(i3c_core_lock);
  */
 void i3c_bus_maintenance_lock(struct i3c_bus *bus)
 {
-	down_write(&bus->lock);
+	mutex_lock(&bus->lock);
+//	down_write(&bus->lock);
 }
 EXPORT_SYMBOL_GPL(i3c_bus_maintenance_lock);
 
@@ -48,7 +49,8 @@ EXPORT_SYMBOL_GPL(i3c_bus_maintenance_lock);
  */
 void i3c_bus_maintenance_unlock(struct i3c_bus *bus)
 {
-	up_write(&bus->lock);
+	mutex_unlock(&bus->lock);
+//	up_write(&bus->lock);
 }
 EXPORT_SYMBOL_GPL(i3c_bus_maintenance_unlock);
 
@@ -70,7 +72,8 @@ EXPORT_SYMBOL_GPL(i3c_bus_maintenance_unlock);
  */
 void i3c_bus_normaluse_lock(struct i3c_bus *bus)
 {
-	down_read(&bus->lock);
+	mutex_lock(&bus->lock);
+	//down_read(&bus->lock);
 }
 EXPORT_SYMBOL_GPL(i3c_bus_normaluse_lock);
 
@@ -84,7 +87,8 @@ EXPORT_SYMBOL_GPL(i3c_bus_normaluse_lock);
  */
 void i3c_bus_normaluse_unlock(struct i3c_bus *bus)
 {
-	up_read(&bus->lock);
+	mutex_unlock(&bus->lock);
+	//up_read(&bus->lock);
 }
 EXPORT_SYMBOL_GPL(i3c_bus_normaluse_unlock);
 
@@ -476,7 +480,8 @@ struct i3c_bus *i3c_bus_create(struct device *parent)
 	if (!i3cbus)
 		return ERR_PTR(-ENOMEM);
 
-	init_rwsem(&i3cbus->lock);
+	mutex_init(&i3cbus->lock);
+//	init_rwsem(&i3cbus->lock);
 	INIT_LIST_HEAD(&i3cbus->devs.i2c);
 	INIT_LIST_HEAD(&i3cbus->devs.i3c);
 	i3c_bus_init_addrslots(i3cbus);

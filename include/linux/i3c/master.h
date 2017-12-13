@@ -252,7 +252,8 @@ struct i3c_bus {
 		struct list_head i3c;
 		struct list_head i2c;
 	} devs;
-	struct rw_semaphore lock;
+	struct mutex lock;
+	//struct rw_semaphore lock;
 };
 
 static inline struct i3c_device *dev_to_i3cdev(struct device *dev)
