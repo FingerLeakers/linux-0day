@@ -27,6 +27,7 @@ struct property_entry;
 struct spi_controller;
 struct spi_transfer;
 struct spi_flash_read_message;
+struct spi_controller_mem_ops;
 
 /*
  * INTERFACES between SPI master-side drivers and SPI slave protocol handlers,
@@ -376,6 +377,9 @@ static inline void spi_unregister_driver(struct spi_driver *sdrv)
  *                    transfer_one callback.
  * @handle_err: the subsystem calls the driver to handle an error that occurs
  *		in the generic implementation of transfer_one_message().
+ * @mem_ops: optimized/dedicated operations for interactions with SPI memory.
+ *	     This field is optional and should only be implemented if the
+ *	     controller has native support for memory like operations.
  * @unprepare_message: undo any work done by prepare_message().
  * @slave_abort: abort the ongoing transfer request on an SPI slave controller
  * @spi_flash_read: to support spi-controller hardwares that provide
@@ -563,6 +567,9 @@ struct spi_controller {
 			    struct spi_transfer *transfer);
 	void (*handle_err)(struct spi_controller *ctlr,
 			   struct spi_message *message);
+
+	/* Optimized handlers for SPI memory-like operations. */
+	const struct spi_controller_mem_ops *mem_ops;
 
 	/* gpio chip select */
 	int			*cs_gpios;
@@ -1224,6 +1231,225 @@ static inline bool spi_flash_read_supported(struct spi_device *spi)
 
 int spi_flash_read(struct spi_device *spi,
 		   struct spi_flash_read_message *msg);
+
+/*---------------------------------------------------------------------------*/
+
+/* SPI memory related definitions. */
+
+#define SPI_MEM_OP_CMD(__opcode, __buswidth)			\
+	{							\
+		.buswidth = __buswidth,				\
+		.opcode = __opcode,				\
+	}
+
+#define SPI_MEM_OP_ADDRS(__nbytes, __buf, __buswidth)		\
+	{							\
+		.nbytes = __nbytes,				\
+		.buf = __buf,					\
+		.buswidth = __buswidth,				\
+	}
+
+#define SPI_MEM_OP_NO_ADDRS	{ }
+
+#define SPI_MEM_OP_DUMMY(__nbytes, __buswidth)			\
+	{							\
+		.nbytes = __nbytes,				\
+		.buswidth = __buswidth,				\
+	}
+
+#define SPI_MEM_OP_NO_DUMMY	{ }
+
+#define SPI_MEM_OP_DATA_IN(__nbytes, __buf, __buswidth)		\
+	{							\
+		.dir = SPI_MEM_DATA_IN,				\
+		.nbytes = __nbytes,				\
+		.buf.in = __buf,				\
+		.buswidth = __buswidth,				\
+	}
+
+#define SPI_MEM_OP_DATA_OUT(__nbytes, __buf, __buswidth)	\
+	{							\
+		.dir = SPI_MEM_DATA_OUT,			\
+		.nbytes = __nbytes,				\
+		.buf.out = __buf,				\
+		.buswidth = __buswidth,				\
+	}
+
+#define SPI_MEM_OP_NO_DATA	{ }
+
+/**
+ * enum spi_mem_data_dir - describes the direction of a SPI memory data
+ *			   transfer from the controller perspective
+ * @SPI_MEM_DATA_IN: data coming from the SPI memory
+ * @SPI_MEM_DATA_OUT: data sent the SPI memory
+ */
+enum spi_mem_data_dir {
+	SPI_MEM_DATA_IN,
+	SPI_MEM_DATA_OUT,
+};
+
+/**
+ * struct spi_mem_op - describes a SPI memory operation
+ * @cmd.buswidth: number of IO lines used to transmit the command
+ * @cmd.opcode: operation opcode
+ * @addr.nbytes: number of address bytes to send. Can be zero if the operation
+ *		 does not need to send an address
+ * @addr.buswidth: number of IO lines used to transmit the address cycles
+ * @addr.buf: buffer storing the address bytes
+ * @dummy.nbytes: number of dummy bytes to send after an opcode or address. Can
+ *		  be zero if the operation does not require dummy bytes
+ * @dummy.buswidth: number of IO lanes used to transmit the dummy bytes
+ * @data.buswidth: number of IO lanes used to send/receive the data
+ * @data.dir: direction of the transfer
+ * @data.buf.in: input buffer
+ * @data.buf.out: output buffer
+ */
+struct spi_mem_op {
+	struct {
+		u8 buswidth;
+		u8 opcode;
+	} cmd;
+
+	struct {
+		u8 nbytes;
+		u8 buswidth;
+		const u8 *buf;
+	} addr;
+
+	struct {
+		u8 nbytes;
+		u8 buswidth;
+	} dummy;
+
+	struct {
+		u8 buswidth;
+		enum spi_mem_data_dir dir;
+		unsigned int nbytes;
+		/* buf.{in,out} must be DMA-able. */
+		union {
+			void *in;
+			const void *out;
+		} buf;
+	} data;
+};
+
+#define SPI_MEM_OP(__cmd, __addr, __dummy, __data)		\
+	{							\
+		.cmd = __cmd,					\
+		.addr = __addr,					\
+		.dummy = __dummy,				\
+		.data = __data,					\
+	}
+
+/**
+ * struct spi_mem - describes a SPI memory device
+ * @spi: the underlying SPI device
+ * @drvpriv: spi_mem_drviver private data
+ *
+ * Extra information that describe the SPI memory device and may be needed by
+ * the controller to properly handle this device should be placed here.
+ *
+ * One example would be the device size since some controller expose their SPI
+ * mem devices through a io-mapped region.
+ */
+struct spi_mem {
+	struct spi_device *spi;
+	void *drvpriv;
+};
+
+/**
+ * struct spi_mem_set_drvdata() - attach driver private data to a SPI mem
+ *				  device
+ * @mem: memory device
+ * @data: data to attach to the memory device
+ */
+static inline void spi_mem_set_drvdata(struct spi_mem *mem, void *data)
+{
+	mem->drvpriv = data;
+}
+
+/**
+ * struct spi_mem_get_drvdata() - get driver private data attached to a SPI mem
+ *				  device
+ * @mem: memory device
+ *
+ * Return: the data attached to the mem device.
+ */
+static inline void *spi_mem_get_drvdata(struct spi_mem *mem)
+{
+	return mem->drvpriv;
+}
+
+/**
+ * struct spi_controller_mem_ops - SPI memory operations
+ * @adjust_op_size: shrink the data xfer of an operation to match controller's
+ *		    limitations (can be alignment of max RX/TX size
+ *		    limitations)
+ * @supports_op: check if an operation is supported by the controller
+ * @exec_op: execute a SPI memory operation
+ *
+ * This interface should be implemented by SPI controllers providing an
+ * high-level interface to execute SPI memory operation, which is usually the
+ * case for QSPI controllers.
+ */
+struct spi_controller_mem_ops {
+	int (*adjust_op_size)(struct spi_mem *mem, struct spi_mem_op *op);
+	bool (*supports_op)(struct spi_mem *mem,
+			    const struct spi_mem_op *op);
+	int (*exec_op)(struct spi_mem *mem,
+		       const struct spi_mem_op *op);
+};
+
+int spi_controller_dma_map_mem_op_data(struct spi_controller *ctlr,
+				       const struct spi_mem_op *op,
+				       struct sg_table *sg);
+
+void spi_controller_dma_unmap_mem_op_data(struct spi_controller *ctlr,
+					  const struct spi_mem_op *op,
+					  struct sg_table *sg);
+
+int spi_mem_adjust_op_size(struct spi_mem *mem, struct spi_mem_op *op);
+
+bool spi_mem_supports_op(struct spi_mem *mem,
+			 const struct spi_mem_op *op);
+
+int spi_mem_exec_op(struct spi_mem *mem,
+		    const struct spi_mem_op *op);
+
+/**
+ * struct spi_mem_driver - SPI memory driver
+ * @spidrv: inherit from a SPI driver
+ * @probe: probe a SPI memory. Usually where detection/initialization takes
+ *	   place
+ * @remove: remove a SPI memory
+ * @shutdown: take appropriate action when the system is shutdown
+ *
+ * This is just a thin wrapper around a spi_driver. The core takes care of
+ * allocating the spi_mem object and forwarding the probe/remove/shutdown
+ * request to the spi_mem_driver. The reason we use this wrapper is because
+ * we might have to stuff more information into the spi_mem struct to let
+ * SPI controllers know more about the SPI memory they interact with, and
+ * having this intermediate layer allows us to do that without adding more
+ * useless fields to the spi_device object.
+ */
+struct spi_mem_driver {
+	struct spi_driver spidrv;
+	int (*probe)(struct spi_mem *mem);
+	int (*remove)(struct spi_mem *mem);
+	void (*shutdown)(struct spi_mem *mem);
+};
+
+int spi_mem_driver_register_with_owner(struct spi_mem_driver *drv,
+				       struct module *owner);
+
+#define spi_mem_driver_register(__drv)                                  \
+	spi_mem_driver_register_with_owner(__drv, THIS_MODULE)
+
+void spi_mem_driver_unregister(struct spi_mem_driver *drv);
+
+#define module_spi_mem_driver(__drv)                                    \
+	module_driver(__drv, spi_mem_driver_register,                   \
+		      spi_mem_driver_unregister)
 
 /*---------------------------------------------------------------------------*/
 
