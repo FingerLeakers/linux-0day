@@ -296,22 +296,6 @@ static const struct spi_controller_mem_ops bcm53xxspi_mem_ops = {
 	.exec_op = bcm53xxspi_exec_mem_op,
 };
 
-static int bcm53xxspi_flash_read(struct spi_device *spi,
-				 struct spi_flash_read_message *msg)
-{
-	struct bcm53xxspi *b53spi = spi_master_get_devdata(spi->master);
-	int ret = 0;
-
-	if (msg->from + msg->len > BCM53XXSPI_FLASH_WINDOW)
-		return -EINVAL;
-
-	bcm53xxspi_enable_bspi(b53spi);
-	memcpy_fromio(msg->buf, b53spi->mmio_base + msg->from, msg->len);
-	msg->retlen = msg->len;
-
-	return ret;
-}
-
 /**************************************************
  * BCMA
  **************************************************/
@@ -350,10 +334,8 @@ static int bcm53xxspi_bcma_probe(struct bcma_device *core)
 
 	master->dev.of_node = dev->of_node;
 	master->transfer_one = bcm53xxspi_transfer_one;
-	if (b53spi->mmio_base) {
+	if (b53spi->mmio_base)
 		master->mem_ops = &bcm53xxspi_mem_ops;
-		master->spi_flash_read = bcm53xxspi_flash_read;
-	}
 
 	bcma_set_drvdata(core, b53spi);
 
