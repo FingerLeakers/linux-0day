@@ -44,8 +44,6 @@ static int phram_erase(struct mtd_info *mtd, struct erase_info *instr)
 	 * I don't feel at all ashamed. This kind of thing is possible anyway
 	 * with flash, but unlikely.
 	 */
-	instr->state = MTD_ERASE_DONE;
-	mtd_erase_callback(instr);
 	return 0;
 }
 
